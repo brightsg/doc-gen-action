@@ -55,7 +55,7 @@ export interface CallClaudeResult {
 
 async function callWithRetry(
   client: Anthropic,
-  params: Anthropic.MessageCreateParams,
+  params: Anthropic.MessageCreateParamsNonStreaming,
   retries = 3
 ): Promise<Anthropic.Message> {
   for (let attempt = 1; attempt <= retries; attempt++) {
