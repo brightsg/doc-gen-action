@@ -1,0 +1,66 @@
+name: 'Doc Gen Action'
+description: 'Automatically generate and maintain documentation using Claude API'
+author: 'BrightSG'
+
+inputs:
+  anthropic-api-key:
+    description: 'Anthropic API key for Claude calls'
+    required: true
+  github-token:
+    description: 'GitHub token with repo write + dispatch permissions'
+    required: true
+  docs-repo:
+    description: 'Target docs site repo (e.g. brightsg/autodoc-test)'
+    required: true
+  repo-name:
+    description: 'Identifier for this repo in the docs site'
+    required: true
+  claude-model:
+    description: 'Claude model to use'
+    required: false
+    default: 'claude-sonnet-4-6'
+  human-doc-types:
+    description: 'Comma-separated list of human doc types to generate (api,architecture,onboarding)'
+    required: false
+    default: 'api,architecture,onboarding'
+  claude-md-path:
+    description: 'Path for the lightweight AI doc'
+    required: false
+    default: 'CLAUDE.md'
+  claude-md-verbose-path:
+    description: 'Path for the detailed AI doc'
+    required: false
+    default: 'CLAUDE-VERBOSE.md'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install action dependencies
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}
+        npm ci
+
+    - name: Build TypeScript
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}
+        npm run build
+
+    - name: Run documentation generation
+      shell: bash
+      env:
+        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_DOCS_REPO: ${{ inputs.docs-repo }}
+        INPUT_REPO_NAME: ${{ inputs.repo-name }}
+        INPUT_CLAUDE_MODEL: ${{ inputs.claude-model }}
+        INPUT_HUMAN_DOC_TYPES: ${{ inputs.human-doc-types }}
+        INPUT_CLAUDE_MD_PATH: ${{ inputs.claude-md-path }}
+        INPUT_CLAUDE_MD_VERBOSE_PATH: ${{ inputs.claude-md-verbose-path }}
+      run: node ${{ github.action_path }}/dist/main.js
