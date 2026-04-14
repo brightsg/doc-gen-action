@@ -179,23 +179,77 @@ async function main() {
   }
   console.log("::endgroup::");
 
-  console.log(`::group::Dispatching human docs`);
-  const docsPayload = JSON.stringify({
-    event_type: "docs-update",
-    client_payload: {
-      repo: repoName,
-      docs: result.humanDocs,
-    },
-  });
+  console.log(`::group::Pushing human docs to ${docsRepo}`);
+  for (const [docType, content] of Object.entries(result.humanDocs)) {
+    if (!content) continue;
+    const filePath = `docs/${repoName}/${docType}.md`;
+    console.log(`Pushing ${filePath}...`);
 
+    try {
+      // Check if file already exists to get its SHA (needed for updates)
+      let existingSha = "";
+      try {
+        const existingFile = execSync(
+          `curl -s -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
+          { encoding: "utf-8" }
+        );
+        const parsed = JSON.parse(existingFile);
+        if (parsed.sha) existingSha = parsed.sha;
+      } catch {
+        // File doesn't exist yet, that's fine
+      }
+
+      const base64Content = Buffer.from(content).toString("base64");
+      const putPayload = JSON.stringify({
+        message: `docs(auto): update ${repoName}/${docType} documentation`,
+        content: base64Content,
+        ...(existingSha ? { sha: existingSha } : {}),
+        committer: {
+          name: "doc-gen-action",
+          email: "doc-gen-action@brightsg.com",
+        },
+      });
+
+      const tmpFile = `/tmp/doc-payload-${docType}.json`;
+      writeFileSync(tmpFile, putPayload);
+
+      execSync(
+        `curl -s -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath} -d @${tmpFile}`,
+        { stdio: "inherit" }
+      );
+      console.log(`Pushed ${filePath}`);
+    } catch (error) {
+      console.log(`::warning::Failed to push ${filePath}: ${error}`);
+    }
+  }
+
+  // Create category metadata if needed
+  const categoryPath = `docs/${repoName}/_category_.json`;
   try {
-    execSync(
-      `curl -s -X POST -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/dispatches -d '${docsPayload.replace(/'/g, "'\\''")}'`,
-      { stdio: "inherit" }
+    const checkCategory = execSync(
+      `curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token ${githubToken}" https://api.github.com/repos/${docsRepo}/contents/${categoryPath}`,
+      { encoding: "utf-8" }
     );
-    console.log(`Dispatched docs to ${docsRepo}`);
+    if (checkCategory.trim() === "404") {
+      const categoryContent = JSON.stringify({ label: repoName, position: 2 }, null, 2);
+      const categoryPayload = JSON.stringify({
+        message: `docs(auto): add ${repoName} category metadata`,
+        content: Buffer.from(categoryContent).toString("base64"),
+        committer: {
+          name: "doc-gen-action",
+          email: "doc-gen-action@brightsg.com",
+        },
+      });
+      const tmpFile = "/tmp/doc-payload-category.json";
+      writeFileSync(tmpFile, categoryPayload);
+      execSync(
+        `curl -s -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${categoryPath} -d @${tmpFile}`,
+        { stdio: "inherit" }
+      );
+      console.log(`Created category metadata for ${repoName}`);
+    }
   } catch (error) {
-    console.log(`::warning::Failed to dispatch to ${docsRepo}: ${error}`);
+    console.log(`::warning::Failed to create category metadata: ${error}`);
   }
   console.log("::endgroup::");
 
