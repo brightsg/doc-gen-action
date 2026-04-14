@@ -180,23 +180,44 @@ async function main() {
   console.log("::endgroup::");
 
   console.log(`::group::Pushing human docs to ${docsRepo}`);
-  for (const [docType, content] of Object.entries(result.humanDocs)) {
-    if (!content) continue;
+  const humanDocEntries = Object.entries(result.humanDocs);
+  console.log(`Human doc types generated: ${humanDocEntries.map(([k]) => k).join(", ")}`);
+  console.log(`Target repo: ${docsRepo}`);
+  console.log(`Target path: docs/${repoName}/`);
+
+  for (const [docType, content] of humanDocEntries) {
+    if (!content) {
+      console.log(`Skipping ${docType} — empty content`);
+      continue;
+    }
     const filePath = `docs/${repoName}/${docType}.md`;
-    console.log(`Pushing ${filePath}...`);
+    console.log(`\nPushing ${filePath} (${content.length} chars)...`);
 
     try {
       // Check if file already exists to get its SHA (needed for updates)
       let existingSha = "";
-      try {
-        const existingFile = execSync(
-          `curl -s -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
-          { encoding: "utf-8" }
-        );
-        const parsed = JSON.parse(existingFile);
-        if (parsed.sha) existingSha = parsed.sha;
-      } catch {
-        // File doesn't exist yet, that's fine
+      console.log(`  Checking if ${filePath} exists in ${docsRepo}...`);
+      const existingFileResponse = execSync(
+        `curl -s -w "\\n%{http_code}" -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
+        { encoding: "utf-8" }
+      );
+      const responseLines = existingFileResponse.trim().split("\n");
+      const httpStatus = responseLines.pop();
+      const responseBody = responseLines.join("\n");
+      console.log(`  GET status: ${httpStatus}`);
+
+      if (httpStatus === "200") {
+        try {
+          const parsed = JSON.parse(responseBody);
+          if (parsed.sha) {
+            existingSha = parsed.sha;
+            console.log(`  Existing file found, SHA: ${existingSha}`);
+          }
+        } catch (parseErr) {
+          console.log(`  Warning: could not parse existing file response`);
+        }
+      } else {
+        console.log(`  File does not exist yet, will create`);
       }
 
       const base64Content = Buffer.from(content).toString("base64");
@@ -210,14 +231,26 @@ async function main() {
         },
       });
 
+      console.log(`  Payload size: ${putPayload.length} bytes`);
       const tmpFile = `/tmp/doc-payload-${docType}.json`;
       writeFileSync(tmpFile, putPayload);
 
-      execSync(
-        `curl -s -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath} -d @${tmpFile}`,
-        { stdio: "inherit" }
+      console.log(`  PUT ${filePath} to ${docsRepo}...`);
+      const putResponse = execSync(
+        `curl -s -w "\\n%{http_code}" -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath} -d @${tmpFile}`,
+        { encoding: "utf-8" }
       );
-      console.log(`Pushed ${filePath}`);
+      const putLines = putResponse.trim().split("\n");
+      const putStatus = putLines.pop();
+      const putBody = putLines.join("\n");
+      console.log(`  PUT status: ${putStatus}`);
+
+      if (putStatus === "200" || putStatus === "201") {
+        console.log(`  Successfully pushed ${filePath}`);
+      } else {
+        console.log(`  PUT response body: ${putBody.substring(0, 500)}`);
+        console.log(`::warning::Failed to push ${filePath} — HTTP ${putStatus}`);
+      }
     } catch (error) {
       console.log(`::warning::Failed to push ${filePath}: ${error}`);
     }
@@ -225,12 +258,18 @@ async function main() {
 
   // Create category metadata if needed
   const categoryPath = `docs/${repoName}/_category_.json`;
+  console.log(`\nChecking category metadata at ${categoryPath}...`);
   try {
-    const checkCategory = execSync(
-      `curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token ${githubToken}" https://api.github.com/repos/${docsRepo}/contents/${categoryPath}`,
+    const checkResponse = execSync(
+      `curl -s -w "\\n%{http_code}" -H "Authorization: token ${githubToken}" https://api.github.com/repos/${docsRepo}/contents/${categoryPath}`,
       { encoding: "utf-8" }
     );
-    if (checkCategory.trim() === "404") {
+    const catLines = checkResponse.trim().split("\n");
+    const catStatus = catLines.pop();
+    console.log(`  GET status: ${catStatus}`);
+
+    if (catStatus === "404") {
+      console.log(`  Creating category metadata...`);
       const categoryContent = JSON.stringify({ label: repoName, position: 2 }, null, 2);
       const categoryPayload = JSON.stringify({
         message: `docs(auto): add ${repoName} category metadata`,
@@ -242,14 +281,25 @@ async function main() {
       });
       const tmpFile = "/tmp/doc-payload-category.json";
       writeFileSync(tmpFile, categoryPayload);
-      execSync(
-        `curl -s -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${categoryPath} -d @${tmpFile}`,
-        { stdio: "inherit" }
+      const catPutResponse = execSync(
+        `curl -s -w "\\n%{http_code}" -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${categoryPath} -d @${tmpFile}`,
+        { encoding: "utf-8" }
       );
-      console.log(`Created category metadata for ${repoName}`);
+      const catPutLines = catPutResponse.trim().split("\n");
+      const catPutStatus = catPutLines.pop();
+      console.log(`  PUT status: ${catPutStatus}`);
+      if (catPutStatus === "200" || catPutStatus === "201") {
+        console.log(`  Created category metadata for ${repoName}`);
+      } else {
+        const catPutBody = catPutLines.join("\n");
+        console.log(`  PUT response: ${catPutBody.substring(0, 500)}`);
+        console.log(`::warning::Failed to create category metadata — HTTP ${catPutStatus}`);
+      }
+    } else {
+      console.log(`  Category metadata already exists`);
     }
   } catch (error) {
-    console.log(`::warning::Failed to create category metadata: ${error}`);
+    console.log(`::warning::Failed to check/create category metadata: ${error}`);
   }
   console.log("::endgroup::");
 
