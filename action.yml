@@ -31,6 +31,10 @@ inputs:
     description: 'Path for the detailed AI doc'
     required: false
     default: 'CLAUDE-VERBOSE.md'
+  force-generate:
+    description: 'Skip change detection and force full generation'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -63,4 +67,5 @@ runs:
         INPUT_HUMAN_DOC_TYPES: ${{ inputs.human-doc-types }}
         INPUT_CLAUDE_MD_PATH: ${{ inputs.claude-md-path }}
         INPUT_CLAUDE_MD_VERBOSE_PATH: ${{ inputs.claude-md-verbose-path }}
+        INPUT_FORCE_GENERATE: ${{ inputs.force-generate }}
       run: node ${{ github.action_path }}/dist/main.js

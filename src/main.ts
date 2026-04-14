@@ -66,26 +66,37 @@ async function main() {
   const claudeMdVerbosePath = getEnv("INPUT_CLAUDE_MD_VERBOSE_PATH", false) || "CLAUDE-VERBOSE.md";
 
   const humanDocTypes = humanDocTypesStr.split(",").map((s) => s.trim()) as HumanDocType[];
+  const forceGenerate = getEnv("INPUT_FORCE_GENERATE", false) === "true";
 
-  console.log(`::group::Detecting changes`);
-  const changedFiles = getChangedFiles();
-  const ignorePatterns = loadIgnorePatterns();
+  let forceFullGeneration = false;
+  let changedFiles: string[] = [];
 
-  if (shouldSkipGeneration(changedFiles, ignorePatterns)) {
-    console.log("Only ignored files changed — skipping doc generation.");
+  if (forceGenerate) {
+    console.log(`::group::Detecting changes`);
+    console.log("Force generation enabled — skipping change detection, running full codebase analysis.");
+    forceFullGeneration = true;
     console.log("::endgroup::");
-    return;
-  }
+  } else {
+    console.log(`::group::Detecting changes`);
+    changedFiles = getChangedFiles();
+    const ignorePatterns = loadIgnorePatterns();
 
-  const categories = categoriseChanges(changedFiles);
-  console.log(`Source changes: ${Object.keys(categories.sourceChanges).join(", ") || "none"}`);
-  console.log(`Test changes: ${Object.keys(categories.testChanges).join(", ") || "none"}`);
-  console.log(`Root changes: ${categories.rootChanges.join(", ") || "none"}`);
-  console.log("::endgroup::");
+    if (shouldSkipGeneration(changedFiles, ignorePatterns)) {
+      console.log("Only ignored files changed — skipping doc generation.");
+      console.log("::endgroup::");
+      return;
+    }
+
+    const categories = categoriseChanges(changedFiles);
+    console.log(`Source changes: ${Object.keys(categories.sourceChanges).join(", ") || "none"}`);
+    console.log(`Test changes: ${Object.keys(categories.testChanges).join(", ") || "none"}`);
+    console.log(`Root changes: ${categories.rootChanges.join(", ") || "none"}`);
+    console.log("::endgroup::");
+  }
 
   console.log(`::group::Assembling context`);
   const existingClaudeMd = readFile(claudeMdPath);
-  const firstRun = isFirstRun(existingClaudeMd);
+  const firstRun = forceFullGeneration || isFirstRun(existingClaudeMd);
   console.log(`Mode: ${firstRun ? "first run (full codebase)" : "incremental (diff-based)"}`);
 
   const structuralFiles: RepoFile[] = [
