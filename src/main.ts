@@ -81,7 +81,13 @@ async function main() {
     changedFiles = getChangedFiles();
     const ignorePatterns = loadIgnorePatterns();
 
-    if (shouldSkipGeneration(changedFiles, ignorePatterns)) {
+    const existingClaudeMdForCheck = readFile(claudeMdPath);
+    const firstRunCheck = isFirstRun(existingClaudeMdForCheck);
+
+    if (firstRunCheck) {
+      console.log("No existing generated docs found — forcing full codebase generation.");
+      forceFullGeneration = true;
+    } else if (shouldSkipGeneration(changedFiles, ignorePatterns)) {
       console.log("Only ignored files changed — skipping doc generation.");
       console.log("::endgroup::");
       return;
