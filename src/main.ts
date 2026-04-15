@@ -176,6 +176,12 @@ async function main() {
     execSync(`git commit -m "docs(auto): update AI documentation"`, { stdio: "inherit" });
     execSync(`git push origin "${branchName}"`, { stdio: "inherit" });
 
+    // Detect the consuming repo from git remote
+    const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8" }).trim();
+    const repoMatch = remoteUrl.match(/github\.com\/(.+?)(?:\.git)?$/);
+    const consumingRepo = repoMatch ? repoMatch[1] : process.env.GITHUB_REPOSITORY || "";
+    console.log(`Creating PR on: ${consumingRepo}`);
+
     // Create PR via GitHub API
     const prPayload = JSON.stringify({
       title: "docs(auto): update AI documentation",
@@ -187,18 +193,19 @@ async function main() {
     writeFileSync(tmpPrFile, prPayload);
 
     const prResponse = execSync(
-      `curl -s -w "\\n%{http_code}" -X POST -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/pulls -d @${tmpPrFile}`,
+      `curl -s -w "\\n%{http_code}" -X POST -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${consumingRepo}/pulls -d @${tmpPrFile}`,
       { encoding: "utf-8" }
     );
     const prLines = prResponse.trim().split("\n");
     const prStatus = prLines.pop();
     const prBody = prLines.join("\n");
+    console.log(`PR API response: HTTP ${prStatus}`);
 
     if (prStatus === "201") {
       const prUrl = JSON.parse(prBody).html_url;
       console.log(`PR created: ${prUrl}`);
     } else {
-      console.log(`::warning::Failed to create PR (HTTP ${prStatus}): ${prBody.substring(0, 300)}`);
+      console.log(`::warning::Failed to create PR (HTTP ${prStatus}): ${prBody.substring(0, 500)}`);
     }
 
     // Switch back to main for the human docs push step
