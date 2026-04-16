@@ -5,6 +5,7 @@ import { resolve } from "path";
 import { categoriseChanges, shouldSkipGeneration } from "./detect-changes.js";
 import { buildContextPayload, isFirstRun, type RepoFile } from "./assemble-context.js";
 import { generateDocs, type HumanDocType } from "./generate-docs.js";
+import { resolveDocTypes } from "./resolve-doc-types.js";
 
 function getEnv(name: string, required: boolean = true): string {
   const value = process.env[name];
@@ -61,11 +62,25 @@ async function main() {
   const docsRepo = getEnv("INPUT_DOCS_REPO");
   const repoName = getEnv("INPUT_REPO_NAME");
   const model = getEnv("INPUT_CLAUDE_MODEL", false) || "claude-sonnet-4-6";
-  const humanDocTypesStr = getEnv("INPUT_HUMAN_DOC_TYPES", false) || "api,architecture,onboarding";
+  const humanDocTypesOverride = getEnv("INPUT_HUMAN_DOC_TYPES", false);
+  const projectType = getEnv("INPUT_PROJECT_TYPE", false);
   const claudeMdPath = getEnv("INPUT_CLAUDE_MD_PATH", false) || "CLAUDE.md";
   const claudeMdVerbosePath = getEnv("INPUT_CLAUDE_MD_VERBOSE_PATH", false) || "CLAUDE-VERBOSE.md";
 
-  const humanDocTypes = humanDocTypesStr.split(",").map((s) => s.trim()) as HumanDocType[];
+  let humanDocTypes: HumanDocType[];
+  if (humanDocTypesOverride) {
+    console.log(`Using explicit human-doc-types override: ${humanDocTypesOverride}`);
+    humanDocTypes = humanDocTypesOverride.split(",").map((s) => s.trim()) as HumanDocType[];
+  } else if (projectType) {
+    console.log(`Resolving doc types from project-type: ${projectType}`);
+    humanDocTypes = resolveDocTypes(projectType);
+    console.log(`Resolved doc types: ${humanDocTypes.join(", ")}`);
+  } else {
+    throw new Error(
+      "Either project-type or human-doc-types must be provided. " +
+      "Set project-type to one of: api, worker, sdk, frontend, cli"
+    );
+  }
   const forceGenerate = getEnv("INPUT_FORCE_GENERATE", false) === "true";
 
   let forceFullGeneration = false;

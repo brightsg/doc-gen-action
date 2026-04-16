@@ -19,10 +19,12 @@ inputs:
     description: 'Claude model to use'
     required: false
     default: 'claude-sonnet-4-6'
-  human-doc-types:
-    description: 'Comma-separated list of human doc types to generate (api,architecture,onboarding)'
+  project-type:
+    description: 'Project type(s) — determines which docs to generate. Comma-separated for multi-service repos. Valid: api, worker, sdk, frontend, cli'
     required: false
-    default: 'api,architecture,onboarding'
+  human-doc-types:
+    description: 'Override: explicit comma-separated doc types. Takes precedence over project-type if set.'
+    required: false
   claude-md-path:
     description: 'Path for the lightweight AI doc'
     required: false
@@ -65,6 +67,7 @@ runs:
         INPUT_REPO_NAME: ${{ inputs.repo-name }}
         INPUT_CLAUDE_MODEL: ${{ inputs.claude-model }}
         INPUT_HUMAN_DOC_TYPES: ${{ inputs.human-doc-types }}
+        INPUT_PROJECT_TYPE: ${{ inputs.project-type }}
         INPUT_CLAUDE_MD_PATH: ${{ inputs.claude-md-path }}
         INPUT_CLAUDE_MD_VERBOSE_PATH: ${{ inputs.claude-md-verbose-path }}
         INPUT_FORCE_GENERATE: ${{ inputs.force-generate }}
