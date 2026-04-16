@@ -12,7 +12,7 @@ function loadPrompt(name: string): string {
   return readFileSync(resolve(promptsDir, `${name}.md`), "utf-8");
 }
 
-export type HumanDocType = "api" | "architecture" | "onboarding";
+export type HumanDocType = "api" | "architecture" | "onboarding" | "worker" | "sdk-usage" | "cli-reference";
 
 export interface GenerateDocsOptions {
   client: Anthropic;
@@ -36,6 +36,9 @@ const humanDocPromptMap: Record<HumanDocType, string> = {
   api: "api-docs",
   architecture: "architecture-docs",
   onboarding: "onboarding-docs",
+  worker: "worker-docs",
+  "sdk-usage": "sdk-usage-docs",
+  "cli-reference": "cli-reference-docs",
 };
 
 export async function generateDocs(options: GenerateDocsOptions): Promise<GenerateDocsResult> {
