@@ -91,4 +91,26 @@ describe("generateDocs", () => {
     expect(result.humanDocs["sdk-usage"]).toBeDefined();
     expect(result.humanDocs.api).toBeUndefined();
   });
+
+  it("should generate frontend-usage doc type", async () => {
+    const mockClient = {
+      messages: {
+        create: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "Generated content" }],
+          usage: { input_tokens: 1000, output_tokens: 500 },
+        }),
+      },
+    };
+
+    const result = await generateDocs({
+      client: mockClient as any,
+      model: "claude-sonnet-4-6",
+      payload: mockPayload,
+      humanDocTypes: ["frontend-usage"],
+      maxTokensPerChunk: 150_000,
+    });
+
+    expect(result.humanDocs["frontend-usage"]).toBeDefined();
+    expect(result.humanDocs.api).toBeUndefined();
+  });
 });

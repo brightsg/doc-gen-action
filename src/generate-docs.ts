@@ -8,11 +8,11 @@ import { chunkSections, callClaudeWithChunks } from "./chunk-and-call.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const promptsDir = resolve(__dirname, "..", "prompts");
 
-function loadPrompt(name: string): string {
+export function loadPrompt(name: string): string {
   return readFileSync(resolve(promptsDir, `${name}.md`), "utf-8");
 }
 
-export type HumanDocType = "api" | "architecture" | "onboarding" | "worker" | "sdk-usage" | "cli-reference";
+export type HumanDocType = "api" | "architecture" | "onboarding" | "worker" | "sdk-usage" | "cli-reference" | "frontend-usage" | "release-notes";
 
 export interface GenerateDocsOptions {
   client: Anthropic;
@@ -39,6 +39,8 @@ const humanDocPromptMap: Record<HumanDocType, string> = {
   worker: "worker-docs",
   "sdk-usage": "sdk-usage-docs",
   "cli-reference": "cli-reference-docs",
+  "frontend-usage": "frontend-usage-docs",
+  "release-notes": "release-notes-docs",
 };
 
 export async function generateDocs(options: GenerateDocsOptions): Promise<GenerateDocsResult> {

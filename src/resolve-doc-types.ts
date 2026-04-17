@@ -8,7 +8,7 @@ const PROJECT_TYPE_DOC_MAP: Record<ProjectType, HumanDocType[]> = {
   api: ["api"],
   worker: ["worker"],
   sdk: ["sdk-usage"],
-  frontend: [],
+  frontend: ["frontend-usage"],
   cli: ["cli-reference"],
 };
 

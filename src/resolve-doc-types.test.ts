@@ -17,9 +17,9 @@ describe("resolveDocTypes", () => {
     expect(result).toEqual(["architecture", "onboarding", "sdk-usage"]);
   });
 
-  it("should resolve frontend to architecture, onboarding only", () => {
+  it("should resolve frontend to architecture, onboarding, frontend-usage", () => {
     const result = resolveDocTypes("frontend");
-    expect(result).toEqual(["architecture", "onboarding"]);
+    expect(result).toEqual(["architecture", "onboarding", "frontend-usage"]);
   });
 
   it("should resolve cli to architecture, onboarding, cli-reference", () => {
