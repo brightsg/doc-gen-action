@@ -4,8 +4,10 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { categoriseChanges, shouldSkipGeneration } from "./detect-changes.js";
 import { buildContextPayload, isFirstRun, type RepoFile } from "./assemble-context.js";
-import { generateDocs, type HumanDocType } from "./generate-docs.js";
+import { generateDocs, loadPrompt, type HumanDocType } from "./generate-docs.js";
+import { callClaudeWithChunks } from "./chunk-and-call.js";
 import { resolveDocTypes } from "./resolve-doc-types.js";
+import type { ContextSection } from "./assemble-context.js";
 
 function getEnv(name: string, required: boolean = true): string {
   const value = process.env[name];
@@ -54,6 +56,62 @@ function loadIgnorePatterns(): string[] {
     return [...defaults, ...custom];
   }
   return defaults;
+}
+
+interface GitHistoryResult {
+  content: string;
+  tag: string | null;
+}
+
+function assembleGitHistory(): GitHistoryResult {
+  let base = "HEAD~1";
+  let tag: string | null = null;
+
+  try {
+    const tags = execSync("git tag --sort=-version:refname", { encoding: "utf-8" }).trim();
+    if (tags) {
+      const latestTag = tags.split("\n")[0];
+      base = latestTag;
+      tag = latestTag;
+      console.log(`Release notes: tag-aware mode, generating since ${latestTag}`);
+    }
+  } catch {
+    // No tags or git error — fall back to HEAD~1
+  }
+
+  if (!tag) {
+    console.log("Release notes: per-push mode, generating for latest commit(s)");
+  }
+
+  let log: string;
+  try {
+    log = execSync(`git log ${base}..HEAD --format="- %s (%h)" --no-merges`, { encoding: "utf-8" }).trim();
+  } catch {
+    log = "";
+  }
+
+  if (!log) {
+    return { content: "", tag };
+  }
+
+  let diffStat: string;
+  try {
+    diffStat = execSync(`git diff --stat ${base}..HEAD`, { encoding: "utf-8" }).trim();
+  } catch {
+    diffStat = "";
+  }
+
+  const parts = [
+    `## Commits since ${tag || "last push"}`,
+    "",
+    log,
+  ];
+
+  if (diffStat) {
+    parts.push("", "## Files Changed", "", diffStat);
+  }
+
+  return { content: parts.join("\n"), tag };
 }
 
 async function main() {
@@ -162,13 +220,38 @@ async function main() {
   console.log(`::group::Generating documentation`);
   const client = new Anthropic({ apiKey });
 
+  const sourceDocTypes = humanDocTypes.filter((t) => t !== "release-notes");
+  const needsReleaseNotes = humanDocTypes.includes("release-notes");
+
   const result = await generateDocs({
     client,
     model,
     payload,
-    humanDocTypes,
+    humanDocTypes: sourceDocTypes,
     maxTokensPerChunk: 150_000,
   });
+
+  if (needsReleaseNotes) {
+    const gitHistory = assembleGitHistory();
+    if (gitHistory.content) {
+      const releaseNotesChunks: ContextSection[][] = [
+        [{ label: "Git History", content: gitHistory.content }],
+      ];
+      const releaseNotesResult = await callClaudeWithChunks({
+        client,
+        model,
+        systemPrompt: loadPrompt("release-notes-docs"),
+        chunks: releaseNotesChunks,
+        stitchPrompt: "",
+      });
+      result.humanDocs["release-notes"] = releaseNotesResult.text;
+      result.tokenUsage.totalInput += releaseNotesResult.totalInputTokens;
+      result.tokenUsage.totalOutput += releaseNotesResult.totalOutputTokens;
+      console.log("Release notes generated successfully");
+    } else {
+      console.log("No new commits — skipping release notes generation");
+    }
+  }
 
   console.log(`Token usage — input: ${result.tokenUsage.totalInput}, output: ${result.tokenUsage.totalOutput}`);
   console.log("::endgroup::");
@@ -257,10 +340,11 @@ async function main() {
       const responseBody = responseLines.join("\n");
       console.log(`  GET status: ${httpStatus}`);
 
+      let parsed: { sha?: string; content?: string } | null = null;
       if (httpStatus === "200") {
         try {
-          const parsed = JSON.parse(responseBody);
-          if (parsed.sha) {
+          parsed = JSON.parse(responseBody);
+          if (parsed?.sha) {
             existingSha = parsed.sha;
             console.log(`  Existing file found, SHA: ${existingSha}`);
           }
@@ -271,7 +355,24 @@ async function main() {
         console.log(`  File does not exist yet, will create`);
       }
 
-      const base64Content = Buffer.from(content).toString("base64");
+      let finalContent = content;
+
+      if (docType === "release-notes") {
+        const dateHeader = `## ${new Date().toISOString().split("T")[0]}`;
+        if (existingSha && httpStatus === "200") {
+          try {
+            const existingContent = Buffer.from(parsed!.content!, "base64").toString("utf-8");
+            const withoutTitle = existingContent.replace(/^# Release Notes\n\n/, "");
+            finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}\n\n---\n\n${withoutTitle}`;
+          } catch {
+            finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}`;
+          }
+        } else {
+          finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}`;
+        }
+      }
+
+      const base64Content = Buffer.from(finalContent).toString("base64");
       const putPayload = JSON.stringify({
         message: `docs(auto): update ${repoName}/${docType} documentation`,
         content: base64Content,
