@@ -71,9 +71,13 @@ function assembleGitHistory(): GitHistoryResult {
     const tags = execSync("git tag --sort=-version:refname", { encoding: "utf-8" }).trim();
     if (tags) {
       const latestTag = tags.split("\n")[0];
-      base = latestTag;
-      tag = latestTag;
-      console.log(`Release notes: tag-aware mode, generating since ${latestTag}`);
+      if (!/^[a-zA-Z0-9._\-/]+$/.test(latestTag)) {
+        console.log(`Release notes: skipping tag with unusual characters: ${latestTag}`);
+      } else {
+        base = latestTag;
+        tag = latestTag;
+        console.log(`Release notes: tag-aware mode, generating since ${latestTag}`);
+      }
     }
   } catch {
     // No tags or git error — fall back to HEAD~1
@@ -242,7 +246,7 @@ async function main() {
         model,
         systemPrompt: loadPrompt("release-notes-docs"),
         chunks: releaseNotesChunks,
-        stitchPrompt: "",
+        stitchPrompt: "Combine these partial release notes analyses into a single cohesive release notes entry.",
       });
       result.humanDocs["release-notes"] = releaseNotesResult.text;
       result.tokenUsage.totalInput += releaseNotesResult.totalInputTokens;
@@ -359,9 +363,9 @@ async function main() {
 
       if (docType === "release-notes") {
         const dateHeader = `## ${new Date().toISOString().split("T")[0]}`;
-        if (existingSha && httpStatus === "200") {
+        if (existingSha && httpStatus === "200" && parsed?.content) {
           try {
-            const existingContent = Buffer.from(parsed!.content!, "base64").toString("utf-8");
+            const existingContent = Buffer.from(parsed.content, "base64").toString("utf-8");
             const withoutTitle = existingContent.replace(/^# Release Notes\n\n/, "");
             finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}\n\n---\n\n${withoutTitle}`;
           } catch {
