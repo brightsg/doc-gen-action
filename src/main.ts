@@ -9,6 +9,144 @@ import { callClaudeWithChunks } from "./chunk-and-call.js";
 import { resolveDocTypes } from "./resolve-doc-types.js";
 import type { ContextSection } from "./assemble-context.js";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface PushResult {
+  success: boolean;
+  status: string;
+  body: string;
+}
+
+function pushFileToRepo(
+  githubToken: string,
+  docsRepo: string,
+  filePath: string,
+  finalContent: string,
+  existingSha: string
+): PushResult {
+  const base64Content = Buffer.from(finalContent).toString("base64");
+  const putPayload = JSON.stringify({
+    message: `docs(auto): update ${filePath} documentation`,
+    content: base64Content,
+    ...(existingSha ? { sha: existingSha } : {}),
+    committer: {
+      name: "doc-gen-action",
+      email: "doc-gen-action@brightsg.com",
+    },
+  });
+
+  const tmpFile = `/tmp/doc-payload-${filePath.replace(/\//g, "-")}.json`;
+  writeFileSync(tmpFile, putPayload);
+
+  const putResponse = execSync(
+    `curl -s -w "\\n%{http_code}" -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath} -d @${tmpFile}`,
+    { encoding: "utf-8" }
+  );
+  const putLines = putResponse.trim().split("\n");
+  const putStatus = putLines.pop() || "";
+  const putBody = putLines.join("\n");
+
+  return {
+    success: putStatus === "200" || putStatus === "201",
+    status: putStatus,
+    body: putBody,
+  };
+}
+
+function verifyFileExists(
+  githubToken: string,
+  docsRepo: string,
+  filePath: string
+): { exists: boolean; sha: string } {
+  try {
+    const response = execSync(
+      `curl -s -w "\\n%{http_code}" -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
+      { encoding: "utf-8" }
+    );
+    const lines = response.trim().split("\n");
+    const status = lines.pop();
+    const body = lines.join("\n");
+
+    if (status === "200") {
+      try {
+        const parsed = JSON.parse(body);
+        return { exists: true, sha: parsed?.sha || "" };
+      } catch {
+        return { exists: true, sha: "" };
+      }
+    }
+    return { exists: false, sha: "" };
+  } catch {
+    return { exists: false, sha: "" };
+  }
+}
+
+async function pushWithRetry(
+  githubToken: string,
+  docsRepo: string,
+  filePath: string,
+  finalContent: string,
+  initialSha: string,
+  maxAttempts: number = 5
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`  Attempt ${attempt}/${maxAttempts}: PUT ${filePath}...`);
+
+    let sha = initialSha;
+    // On retries, re-fetch the SHA in case it changed
+    if (attempt > 1) {
+      console.log(`  Re-fetching SHA for ${filePath}...`);
+      const check = verifyFileExists(githubToken, docsRepo, filePath);
+      sha = check.sha;
+    }
+
+    try {
+      const result = pushFileToRepo(githubToken, docsRepo, filePath, finalContent, sha);
+      console.log(`  PUT status: ${result.status}`);
+
+      if (!result.success) {
+        console.log(`  PUT response body: ${result.body.substring(0, 500)}`);
+        console.log(`  Push failed (HTTP ${result.status}), will ${attempt < maxAttempts ? "retry" : "give up"}`);
+        if (attempt < maxAttempts) {
+          const delayMs = 2000 * Math.pow(2, attempt - 1); // 2s, 4s, 8s, 16s
+          console.log(`  Waiting ${delayMs / 1000}s before retry...`);
+          await sleep(delayMs);
+        }
+        continue;
+      }
+
+      // Verify the file actually made it
+      console.log(`  Verifying file exists in ${docsRepo}...`);
+      await sleep(1000); // Brief pause before verification
+      const verification = verifyFileExists(githubToken, docsRepo, filePath);
+
+      if (verification.exists) {
+        console.log(`  Verified: ${filePath} confirmed in ${docsRepo}`);
+        return true;
+      }
+
+      console.log(`  Verification failed: file not found after successful PUT`);
+      if (attempt < maxAttempts) {
+        const delayMs = 2000 * Math.pow(2, attempt - 1);
+        console.log(`  Waiting ${delayMs / 1000}s before retry...`);
+        await sleep(delayMs);
+      }
+    } catch (error) {
+      console.log(`  Push attempt ${attempt} threw: ${error}`);
+      if (attempt < maxAttempts) {
+        const delayMs = 2000 * Math.pow(2, attempt - 1);
+        console.log(`  Waiting ${delayMs / 1000}s before retry...`);
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  console.log(`::warning::Failed to push ${filePath} after ${maxAttempts} attempts`);
+  return false;
+}
+
 function getEnv(name: string, required: boolean = true): string {
   const value = process.env[name];
   if (required && !value) {
@@ -331,85 +469,48 @@ async function main() {
     const filePath = `docs/${repoName}/${docType}.md`;
     console.log(`\nPushing ${filePath} (${content.length} chars)...`);
 
-    try {
-      // Check if file already exists to get its SHA (needed for updates)
-      let existingSha = "";
-      console.log(`  Checking if ${filePath} exists in ${docsRepo}...`);
-      const existingFileResponse = execSync(
-        `curl -s -w "\\n%{http_code}" -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
-        { encoding: "utf-8" }
-      );
-      const responseLines = existingFileResponse.trim().split("\n");
-      const httpStatus = responseLines.pop();
-      const responseBody = responseLines.join("\n");
-      console.log(`  GET status: ${httpStatus}`);
-
-      let parsed: { sha?: string; content?: string } | null = null;
-      if (httpStatus === "200") {
-        try {
-          parsed = JSON.parse(responseBody);
-          if (parsed?.sha) {
-            existingSha = parsed.sha;
-            console.log(`  Existing file found, SHA: ${existingSha}`);
-          }
-        } catch (parseErr) {
-          console.log(`  Warning: could not parse existing file response`);
-        }
-      } else {
-        console.log(`  File does not exist yet, will create`);
-      }
-
-      let finalContent = content;
-
+    // Check if file already exists to get its SHA and content (needed for updates / release-notes append)
+    let existingSha = "";
+    let parsed: { sha?: string; content?: string } | null = null;
+    console.log(`  Checking if ${filePath} exists in ${docsRepo}...`);
+    const check = verifyFileExists(githubToken, docsRepo, filePath);
+    if (check.exists) {
+      existingSha = check.sha;
+      console.log(`  Existing file found, SHA: ${existingSha}`);
+      // For release-notes we need the existing content, so fetch the full response
       if (docType === "release-notes") {
-        const dateHeader = `## ${new Date().toISOString().split("T")[0]}`;
-        if (existingSha && httpStatus === "200" && parsed?.content) {
-          try {
-            const existingContent = Buffer.from(parsed.content, "base64").toString("utf-8");
-            const withoutTitle = existingContent.replace(/^# Release Notes\n\n/, "");
-            finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}\n\n---\n\n${withoutTitle}`;
-          } catch {
-            finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}`;
-          }
-        } else {
+        try {
+          const existingFileResponse = execSync(
+            `curl -s -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
+            { encoding: "utf-8" }
+          );
+          parsed = JSON.parse(existingFileResponse);
+        } catch {
+          parsed = null;
+        }
+      }
+    } else {
+      console.log(`  File does not exist yet, will create`);
+    }
+
+    let finalContent = content;
+
+    if (docType === "release-notes") {
+      const dateHeader = `## ${new Date().toISOString().split("T")[0]}`;
+      if (existingSha && parsed?.content) {
+        try {
+          const existingContent = Buffer.from(parsed.content, "base64").toString("utf-8");
+          const withoutTitle = existingContent.replace(/^# Release Notes\n\n/, "");
+          finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}\n\n---\n\n${withoutTitle}`;
+        } catch {
           finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}`;
         }
-      }
-
-      const base64Content = Buffer.from(finalContent).toString("base64");
-      const putPayload = JSON.stringify({
-        message: `docs(auto): update ${repoName}/${docType} documentation`,
-        content: base64Content,
-        ...(existingSha ? { sha: existingSha } : {}),
-        committer: {
-          name: "doc-gen-action",
-          email: "doc-gen-action@brightsg.com",
-        },
-      });
-
-      console.log(`  Payload size: ${putPayload.length} bytes`);
-      const tmpFile = `/tmp/doc-payload-${docType}.json`;
-      writeFileSync(tmpFile, putPayload);
-
-      console.log(`  PUT ${filePath} to ${docsRepo}...`);
-      const putResponse = execSync(
-        `curl -s -w "\\n%{http_code}" -X PUT -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath} -d @${tmpFile}`,
-        { encoding: "utf-8" }
-      );
-      const putLines = putResponse.trim().split("\n");
-      const putStatus = putLines.pop();
-      const putBody = putLines.join("\n");
-      console.log(`  PUT status: ${putStatus}`);
-
-      if (putStatus === "200" || putStatus === "201") {
-        console.log(`  Successfully pushed ${filePath}`);
       } else {
-        console.log(`  PUT response body: ${putBody.substring(0, 500)}`);
-        console.log(`::warning::Failed to push ${filePath} — HTTP ${putStatus}`);
+        finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}`;
       }
-    } catch (error) {
-      console.log(`::warning::Failed to push ${filePath}: ${error}`);
     }
+
+    await pushWithRetry(githubToken, docsRepo, filePath, finalContent, existingSha, 5);
   }
 
   // Create category metadata if needed
