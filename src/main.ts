@@ -378,9 +378,8 @@ async function main() {
   const client = new Anthropic({ apiKey });
 
   const sourceDocTypes = humanDocTypes.filter(
-    (t) => t !== "release-notes" && t !== "changelog-internal" && t !== "changelog-external"
+    (t) => t !== "changelog-internal" && t !== "changelog-external"
   );
-  const needsReleaseNotes = humanDocTypes.includes("release-notes");
   const needsChangelogInternal = humanDocTypes.includes("changelog-internal");
   const needsChangelogExternal = humanDocTypes.includes("changelog-external");
 
@@ -392,33 +391,9 @@ async function main() {
     maxTokensPerChunk: 150_000,
   });
 
-  let gitHistory: GitHistoryResult | null = null;
-
-  if (needsReleaseNotes) {
-    gitHistory = assembleGitHistory();
-    if (gitHistory.content) {
-      const releaseNotesChunks: ContextSection[][] = [
-        [{ label: "Git History", content: gitHistory.content }],
-      ];
-      const releaseNotesResult = await callClaudeWithChunks({
-        client,
-        model,
-        systemPrompt: loadPrompt("release-notes-docs"),
-        chunks: releaseNotesChunks,
-        stitchPrompt: "Combine these partial release notes analyses into a single cohesive release notes entry.",
-      });
-      result.humanDocs["release-notes"] = releaseNotesResult.text;
-      result.tokenUsage.totalInput += releaseNotesResult.totalInputTokens;
-      result.tokenUsage.totalOutput += releaseNotesResult.totalOutputTokens;
-      console.log("Release notes generated successfully");
-    } else {
-      console.log("No new commits — skipping release notes generation");
-    }
-  }
-
   if (needsChangelogInternal || needsChangelogExternal) {
     const useFullHistory = firstRun || forceGenerate;
-    const gitHistoryForChangelog = gitHistory && !useFullHistory ? gitHistory : assembleGitHistory(useFullHistory);
+    const gitHistoryForChangelog = assembleGitHistory(useFullHistory);
     if (gitHistoryForChangelog.content) {
       const jiraKeys = extractJiraKeys(gitHistoryForChangelog.content);
       let jiraIssues: Record<string, import("./jira.js").JiraIssueDetail> | undefined;
@@ -542,7 +517,7 @@ async function main() {
     const filePath = `docs/${repoName}/${docType}.md`;
     console.log(`\nPushing ${filePath} (${content.length} chars)...`);
 
-    // Check if file already exists to get its SHA and content (needed for updates / release-notes append)
+    // Check if file already exists to get its SHA and content (needed for updates / changelog append)
     let existingSha = "";
     let parsed: { sha?: string; content?: string } | null = null;
     console.log(`  Checking if ${filePath} exists in ${docsRepo}...`);
@@ -550,8 +525,8 @@ async function main() {
     if (check.exists) {
       existingSha = check.sha;
       console.log(`  Existing file found, SHA: ${existingSha}`);
-      // For release-notes we need the existing content, so fetch the full response
-      if (["release-notes", "changelog-internal", "changelog-external"].includes(docType)) {
+      // For changelogs we need the existing content for append mode
+      if (["changelog-internal", "changelog-external"].includes(docType)) {
         try {
           const existingFileResponse = execSync(
             `curl -s -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
@@ -567,11 +542,10 @@ async function main() {
     }
 
     let finalContent = content;
-    const appendDocTypes = ["release-notes", "changelog-internal", "changelog-external"];
+    const appendDocTypes = ["changelog-internal", "changelog-external"];
 
     if (appendDocTypes.includes(docType)) {
       const titleMap: Record<string, string> = {
-        "release-notes": "# Release Notes",
         "changelog-internal": "# Internal Changelog",
         "changelog-external": "# Changelog",
       };
