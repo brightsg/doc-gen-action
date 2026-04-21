@@ -8,6 +8,7 @@ import { generateDocs, loadPrompt, type HumanDocType } from "./generate-docs.js"
 import { callClaudeWithChunks } from "./chunk-and-call.js";
 import { resolveDocTypes } from "./resolve-doc-types.js";
 import type { ContextSection } from "./assemble-context.js";
+import { extractJiraKeys, fetchJiraIssues, buildChangelogContext } from "./jira.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -266,6 +267,9 @@ async function main() {
   const projectType = getEnv("INPUT_PROJECT_TYPE", false);
   const claudeMdPath = getEnv("INPUT_CLAUDE_MD_PATH", false) || "CLAUDE.md";
   const claudeMdVerbosePath = getEnv("INPUT_CLAUDE_MD_VERBOSE_PATH", false) || "CLAUDE-VERBOSE.md";
+  const jiraApiToken = getEnv("INPUT_JIRA_API_TOKEN", false);
+  const jiraUserEmail = getEnv("INPUT_JIRA_USER_EMAIL", false);
+  const jiraHost = getEnv("INPUT_JIRA_HOST", false);
 
   let humanDocTypes: HumanDocType[];
   if (humanDocTypesOverride) {
@@ -362,8 +366,12 @@ async function main() {
   console.log(`::group::Generating documentation`);
   const client = new Anthropic({ apiKey });
 
-  const sourceDocTypes = humanDocTypes.filter((t) => t !== "release-notes");
+  const sourceDocTypes = humanDocTypes.filter(
+    (t) => t !== "release-notes" && t !== "changelog-internal" && t !== "changelog-external"
+  );
   const needsReleaseNotes = humanDocTypes.includes("release-notes");
+  const needsChangelogInternal = humanDocTypes.includes("changelog-internal");
+  const needsChangelogExternal = humanDocTypes.includes("changelog-external");
 
   const result = await generateDocs({
     client,
@@ -373,8 +381,10 @@ async function main() {
     maxTokensPerChunk: 150_000,
   });
 
+  let gitHistory: GitHistoryResult | null = null;
+
   if (needsReleaseNotes) {
-    const gitHistory = assembleGitHistory();
+    gitHistory = assembleGitHistory();
     if (gitHistory.content) {
       const releaseNotesChunks: ContextSection[][] = [
         [{ label: "Git History", content: gitHistory.content }],
@@ -392,6 +402,57 @@ async function main() {
       console.log("Release notes generated successfully");
     } else {
       console.log("No new commits — skipping release notes generation");
+    }
+  }
+
+  if (needsChangelogInternal || needsChangelogExternal) {
+    const gitHistoryForChangelog = gitHistory ?? assembleGitHistory();
+    if (gitHistoryForChangelog.content) {
+      const jiraKeys = extractJiraKeys(gitHistoryForChangelog.content);
+      let jiraIssues: Record<string, import("./jira.js").JiraIssueDetail> | undefined;
+
+      if (jiraKeys.length > 0 && jiraApiToken && jiraUserEmail && jiraHost) {
+        console.log(`Changelog: found ${jiraKeys.length} Jira key(s): ${jiraKeys.join(", ")}`);
+        jiraIssues = await fetchJiraIssues(jiraKeys, jiraUserEmail, jiraApiToken, jiraHost);
+        console.log(`Changelog: fetched ${Object.keys(jiraIssues).length} Jira issue(s)`);
+      } else if (jiraKeys.length > 0) {
+        console.log(`Changelog: found ${jiraKeys.length} Jira key(s) but no Jira credentials — skipping enrichment`);
+      }
+
+      const changelogContext = buildChangelogContext(gitHistoryForChangelog.content, jiraIssues);
+      const changelogChunks: ContextSection[][] = [
+        [{ label: "Changelog Context", content: changelogContext }],
+      ];
+
+      if (needsChangelogInternal) {
+        const internalResult = await callClaudeWithChunks({
+          client,
+          model,
+          systemPrompt: loadPrompt("changelog-internal-docs"),
+          chunks: changelogChunks,
+          stitchPrompt: "Combine these partial changelog analyses into a single cohesive internal changelog entry.",
+        });
+        result.humanDocs["changelog-internal"] = internalResult.text;
+        result.tokenUsage.totalInput += internalResult.totalInputTokens;
+        result.tokenUsage.totalOutput += internalResult.totalOutputTokens;
+        console.log("Internal changelog generated successfully");
+      }
+
+      if (needsChangelogExternal) {
+        const externalResult = await callClaudeWithChunks({
+          client,
+          model,
+          systemPrompt: loadPrompt("changelog-external-docs"),
+          chunks: changelogChunks,
+          stitchPrompt: "Combine these partial changelog analyses into a single cohesive customer-facing changelog entry.",
+        });
+        result.humanDocs["changelog-external"] = externalResult.text;
+        result.tokenUsage.totalInput += externalResult.totalInputTokens;
+        result.tokenUsage.totalOutput += externalResult.totalOutputTokens;
+        console.log("External changelog generated successfully");
+      }
+    } else {
+      console.log("No new commits — skipping changelog generation");
     }
   }
 
@@ -478,7 +539,7 @@ async function main() {
       existingSha = check.sha;
       console.log(`  Existing file found, SHA: ${existingSha}`);
       // For release-notes we need the existing content, so fetch the full response
-      if (docType === "release-notes") {
+      if (["release-notes", "changelog-internal", "changelog-external"].includes(docType)) {
         try {
           const existingFileResponse = execSync(
             `curl -s -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${docsRepo}/contents/${filePath}`,
@@ -494,19 +555,28 @@ async function main() {
     }
 
     let finalContent = content;
+    const appendDocTypes = ["release-notes", "changelog-internal", "changelog-external"];
 
-    if (docType === "release-notes") {
+    if (appendDocTypes.includes(docType)) {
+      const titleMap: Record<string, string> = {
+        "release-notes": "# Release Notes",
+        "changelog-internal": "# Internal Changelog",
+        "changelog-external": "# Changelog",
+      };
+      const title = titleMap[docType] || `# ${docType}`;
       const dateHeader = `## ${new Date().toISOString().split("T")[0]}`;
+
       if (existingSha && parsed?.content) {
         try {
           const existingContent = Buffer.from(parsed.content, "base64").toString("utf-8");
-          const withoutTitle = existingContent.replace(/^# Release Notes\n\n/, "");
-          finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}\n\n---\n\n${withoutTitle}`;
+          const titleRegex = new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n\\n`);
+          const withoutTitle = existingContent.replace(titleRegex, "");
+          finalContent = `${title}\n\n${dateHeader}\n\n${content}\n\n---\n\n${withoutTitle}`;
         } catch {
-          finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}`;
+          finalContent = `${title}\n\n${dateHeader}\n\n${content}`;
         }
       } else {
-        finalContent = `# Release Notes\n\n${dateHeader}\n\n${content}`;
+        finalContent = `${title}\n\n${dateHeader}\n\n${content}`;
       }
     }
 
