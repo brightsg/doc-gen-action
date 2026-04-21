@@ -543,6 +543,7 @@ async function main() {
 
     let finalContent = content;
     const appendDocTypes = ["changelog-internal", "changelog-external"];
+    const shouldAppend = appendDocTypes.includes(docType) && !forceGenerate && !firstRun;
 
     if (appendDocTypes.includes(docType)) {
       const titleMap: Record<string, string> = {
@@ -552,7 +553,7 @@ async function main() {
       const title = titleMap[docType] || `# ${docType}`;
       const dateHeader = `## ${new Date().toISOString().split("T")[0]}`;
 
-      if (existingSha && parsed?.content) {
+      if (shouldAppend && existingSha && parsed?.content) {
         try {
           const existingContent = Buffer.from(parsed.content, "base64").toString("utf-8");
           const titleRegex = new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n\\n`);
