@@ -202,7 +202,7 @@ interface GitHistoryResult {
   tag: string | null;
 }
 
-function assembleGitHistory(): GitHistoryResult {
+function assembleGitHistory(fullHistory: boolean = false): GitHistoryResult {
   let base = "HEAD~1";
   let tag: string | null = null;
 
@@ -222,13 +222,19 @@ function assembleGitHistory(): GitHistoryResult {
     // No tags or git error — fall back to HEAD~1
   }
 
-  if (!tag) {
+  if (!tag && !fullHistory) {
     console.log("Release notes: per-push mode, generating for latest commit(s)");
   }
 
   let log: string;
   try {
-    log = execSync(`git log ${base}..HEAD --format="- %s (%h)" --no-merges`, { encoding: "utf-8" }).trim();
+    if (fullHistory && !tag) {
+      // No tag available — get full history (capped at 200 commits for sanity)
+      console.log("Changelog: full history mode, generating from all available commits");
+      log = execSync(`git log --format="- %s (%h)" --no-merges -200`, { encoding: "utf-8" }).trim();
+    } else {
+      log = execSync(`git log ${base}..HEAD --format="- %s (%h)" --no-merges`, { encoding: "utf-8" }).trim();
+    }
   } catch {
     log = "";
   }
@@ -239,13 +245,18 @@ function assembleGitHistory(): GitHistoryResult {
 
   let diffStat: string;
   try {
-    diffStat = execSync(`git diff --stat ${base}..HEAD`, { encoding: "utf-8" }).trim();
+    if (fullHistory && !tag) {
+      diffStat = "";
+    } else {
+      diffStat = execSync(`git diff --stat ${base}..HEAD`, { encoding: "utf-8" }).trim();
+    }
   } catch {
     diffStat = "";
   }
 
+  const label = fullHistory && !tag ? "full history" : (tag || "last push");
   const parts = [
-    `## Commits since ${tag || "last push"}`,
+    `## Commits since ${label}`,
     "",
     log,
   ];
@@ -406,7 +417,8 @@ async function main() {
   }
 
   if (needsChangelogInternal || needsChangelogExternal) {
-    const gitHistoryForChangelog = gitHistory ?? assembleGitHistory();
+    const useFullHistory = firstRun || forceGenerate;
+    const gitHistoryForChangelog = gitHistory && !useFullHistory ? gitHistory : assembleGitHistory(useFullHistory);
     if (gitHistoryForChangelog.content) {
       const jiraKeys = extractJiraKeys(gitHistoryForChangelog.content);
       let jiraIssues: Record<string, import("./jira.js").JiraIssueDetail> | undefined;
