@@ -12,7 +12,7 @@ const PROJECT_TYPE_DOC_MAP: Record<ProjectType, HumanDocType[]> = {
   cli: ["cli-reference"],
 };
 
-const SHARED_DOC_TYPES: HumanDocType[] = ["architecture", "onboarding", "release-notes"];
+const SHARED_DOC_TYPES: HumanDocType[] = ["architecture", "onboarding", "release-notes", "changelog-internal", "changelog-external"];
 
 export function resolveDocTypes(projectTypeInput: string): HumanDocType[] {
   const trimmed = projectTypeInput.trim();
