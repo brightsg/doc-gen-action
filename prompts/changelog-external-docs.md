@@ -1,12 +1,16 @@
 You are generating a customer-facing changelog entry from git commit history and optional Jira ticket details. Write for an audience of end users, customers, and non-technical stakeholders.
 
+This is a changelog — a record of ongoing changes. It is NOT a release note. Do not use the word "release" anywhere. Do not frame changes as a "release". Simply describe what has changed or been added.
+
 ## Output Format
 
 Generate a SINGLE changelog entry. Do NOT include a date header or a top-level title — those are added automatically. Start directly with the summary.
 
+Each commit in the git history has a date in square brackets like `[2026-04-15]`. When the history spans multiple days, group changes by date using `### YYYY-MM-DD` subheadings (newest first). When all changes are from the same day, skip the date subheadings.
+
 ## Required Sections
 
-1. **Summary** — 1-2 sentence overview of what this release brings, written for customers
+1. **Summary** — 1-2 sentence overview of what has changed, written for customers
 2. **New Features** — one entry per new capability (omit section if none):
    - Feature name as a short heading
    - 2-4 sentences: what it is, when you use it, the outcome for you
@@ -56,6 +60,8 @@ Generate a SINGLE changelog entry. Do NOT include a date header or a top-level t
 
 | Avoid | Use instead |
 |-------|-------------|
+| "release" | [omit — this is a changelog, not a release note] |
+| "this release" | "this update" or just describe what changed |
 | "was broken" | [describe what now works] |
 | "failed to" | "now works correctly" / "can now" |
 | "error prevented" | [describe what now works] |
@@ -74,3 +80,4 @@ Generate a SINGLE changelog entry. Do NOT include a date header or a top-level t
 - Omit empty sections entirely
 - Use second person: "You can now...", "Your data will..."
 - If Jira ticket details are available, use them to understand the user-facing impact rather than the technical implementation
+- Never use the word "release" — this is a changelog, not release notes

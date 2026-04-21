@@ -231,9 +231,9 @@ function assembleGitHistory(fullHistory: boolean = false): GitHistoryResult {
     if (fullHistory && !tag) {
       // No tag available — get full history (capped at 200 commits for sanity)
       console.log("Changelog: full history mode, generating from all available commits");
-      log = execSync(`git log --format="- %s (%h)" --no-merges -200`, { encoding: "utf-8" }).trim();
+      log = execSync(`git log --format="- [%as] %s (%h)" --no-merges -200`, { encoding: "utf-8" }).trim();
     } else {
-      log = execSync(`git log ${base}..HEAD --format="- %s (%h)" --no-merges`, { encoding: "utf-8" }).trim();
+      log = execSync(`git log ${base}..HEAD --format="- [%as] %s (%h)" --no-merges`, { encoding: "utf-8" }).trim();
     }
   } catch {
     log = "";
