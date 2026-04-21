@@ -37,6 +37,18 @@ inputs:
     description: 'Skip change detection and force full generation'
     required: false
     default: 'false'
+  jira-api-token:
+    description: 'Jira API token for enriching changelogs with ticket details (optional — changelogs generate from git history alone if not provided)'
+    required: false
+    default: ''
+  jira-user-email:
+    description: 'Email address for Jira basic auth (paired with jira-api-token)'
+    required: false
+    default: ''
+  jira-host:
+    description: 'Jira instance hostname (e.g. brightsg.atlassian.net)'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -71,4 +83,7 @@ runs:
         INPUT_CLAUDE_MD_PATH: ${{ inputs.claude-md-path }}
         INPUT_CLAUDE_MD_VERBOSE_PATH: ${{ inputs.claude-md-verbose-path }}
         INPUT_FORCE_GENERATE: ${{ inputs.force-generate }}
+        INPUT_JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+        INPUT_JIRA_USER_EMAIL: ${{ inputs.jira-user-email }}
+        INPUT_JIRA_HOST: ${{ inputs.jira-host }}
       run: node ${{ github.action_path }}/dist/main.js
