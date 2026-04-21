@@ -98,3 +98,29 @@ export async function fetchJiraIssues(
 
   return result;
 }
+
+export function buildChangelogContext(
+  gitHistory: string,
+  jiraIssues?: JiraIssueMap
+): string {
+  const parts: string[] = ["## Git History", "", gitHistory];
+
+  if (jiraIssues && Object.keys(jiraIssues).length > 0) {
+    parts.push("", "## Jira Ticket Details", "");
+    for (const issue of Object.values(jiraIssues)) {
+      parts.push(`### ${issue.key} — ${issue.summary}`);
+      parts.push(`- **Type:** ${issue.issueType}`);
+      parts.push(`- **Status:** ${issue.status}`);
+      parts.push(`- **Project:** ${issue.project}`);
+      if (issue.description) {
+        parts.push(`- **Description:** ${issue.description}`);
+      }
+      if (issue.linkedIssues.length > 0) {
+        parts.push(`- **Linked Issues:** ${issue.linkedIssues.join(", ")}`);
+      }
+      parts.push("");
+    }
+  }
+
+  return parts.join("\n");
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { extractJiraKeys, fetchJiraIssues, type JiraIssueDetail } from "./jira.js";
+import { extractJiraKeys, fetchJiraIssues, buildChangelogContext, type JiraIssueDetail, type JiraIssueMap } from "./jira.js";
 
 describe("extractJiraKeys", () => {
   it("should extract keys from commit messages", () => {
@@ -110,5 +110,68 @@ describe("fetchJiraIssues", () => {
     const result = await fetchJiraIssues([], "user@example.com", "token", "host");
     expect(result).toEqual({});
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildChangelogContext", () => {
+  it("should build context with git history and Jira details", () => {
+    const gitHistory = `## Commits since v1.0.0
+
+- feat: add SSP1 form BPOLUK-1965 (abc1234)
+- fix: pension status TRI-100 (def5678)
+
+## Files Changed
+
+ 5 files changed, 120 insertions(+), 30 deletions(-)`;
+
+    const jiraIssues: JiraIssueMap = {
+      "BPOLUK-1965": {
+        key: "BPOLUK-1965",
+        summary: "Add SSP1 form generation",
+        description: "Implement SSP1 form for HMRC compliance",
+        issueType: "Story",
+        status: "Done",
+        project: "BrightPay Online UK",
+        linkedIssues: ["BPOLUK-1900"],
+      },
+      "TRI-100": {
+        key: "TRI-100",
+        summary: "Pension status not updating",
+        description: "NEST submission status stays pending",
+        issueType: "Bug",
+        status: "Done",
+        project: "Triage",
+        linkedIssues: [],
+      },
+    };
+
+    const result = buildChangelogContext(gitHistory, jiraIssues);
+    expect(result).toContain("## Git History");
+    expect(result).toContain("BPOLUK-1965");
+    expect(result).toContain("## Jira Ticket Details");
+    expect(result).toContain("Add SSP1 form generation");
+    expect(result).toContain("Pension status not updating");
+    expect(result).toContain("BPOLUK-1900");
+  });
+
+  it("should build context without Jira details when not provided", () => {
+    const gitHistory = `## Commits since last push
+
+- chore: update deps (abc1234)`;
+
+    const result = buildChangelogContext(gitHistory);
+    expect(result).toContain("## Git History");
+    expect(result).toContain("update deps");
+    expect(result).not.toContain("## Jira Ticket Details");
+  });
+
+  it("should build context with empty Jira map", () => {
+    const gitHistory = `## Commits since v1.0.0
+
+- fix: quick patch (abc1234)`;
+
+    const result = buildChangelogContext(gitHistory, {});
+    expect(result).toContain("## Git History");
+    expect(result).not.toContain("## Jira Ticket Details");
   });
 });
