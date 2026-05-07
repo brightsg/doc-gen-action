@@ -46,6 +46,16 @@ When `jira-api-token`, `jira-user-email`, and `jira-host` are all provided, the 
 
 If Jira credentials are not provided, changelogs still generate from git history alone.
 
+## How AI docs land on the consuming repo
+
+`CLAUDE.md` and `CLAUDE-VERBOSE.md` are committed back to the consuming repo using a try-direct-then-fall-back-to-PR strategy:
+
+1. The action commits the regenerated docs and tries to push directly to `main`.
+2. If the push is accepted, the docs land on `main` immediately — no PR is opened.
+3. If the push is rejected (typically by branch protection or a ruleset that the action's `github-token` actor cannot bypass), the action pushes the commit to a `docs/auto-update-<timestamp>` branch and opens a PR against `main`.
+
+To get direct-push behaviour, add the `github-token`'s actor (or a role/team it belongs to) to your branch ruleset's bypass list. Deploy keys in the bypass list have no effect here because the action authenticates over HTTPS with a token, not via SSH.
+
 ## Usage
 
 ```yaml
