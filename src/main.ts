@@ -9,6 +9,7 @@ import { callClaudeWithChunks } from "./chunk-and-call.js";
 import { resolveDocTypes } from "./resolve-doc-types.js";
 import type { ContextSection } from "./assemble-context.js";
 import { extractJiraKeys, fetchJiraIssues, buildChangelogContext } from "./jira.js";
+import { pushAiDocs, createDefaultDeps } from "./push-ai-docs.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -452,55 +453,22 @@ async function main() {
   console.log(`Written: ${claudeMdPath}, ${claudeMdVerbosePath}`);
   console.log("::endgroup::");
 
-  console.log(`::group::Creating PR for AI docs`);
-  execSync(`git config user.name "doc-gen-action"`, { stdio: "inherit" });
-  execSync(`git config user.email "doc-gen-action@brightsg.com"`, { stdio: "inherit" });
-  execSync(`git add "${claudeMdPath}" "${claudeMdVerbosePath}"`, { stdio: "inherit" });
+  console.log(`::group::Publishing AI docs`);
+  const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8" }).trim();
+  const repoMatch = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
+  const consumingRepo = repoMatch ? repoMatch[1] : process.env.GITHUB_REPOSITORY || "";
+  console.log(`Consuming repo: ${consumingRepo}`);
 
-  const hasChanges = execSync("git diff --cached --name-only", { encoding: "utf-8" }).trim();
-  if (hasChanges) {
-    const branchName = `docs/auto-update-${Date.now()}`;
-    execSync(`git checkout -b "${branchName}"`, { stdio: "inherit" });
-    execSync(`git commit -m "docs(auto): update AI documentation"`, { stdio: "inherit" });
-    execSync(`git push origin "${branchName}"`, { stdio: "inherit" });
-
-    // Detect the consuming repo from git remote
-    const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8" }).trim();
-    const repoMatch = remoteUrl.match(/github\.com\/(.+?)(?:\.git)?$/);
-    const consumingRepo = repoMatch ? repoMatch[1] : process.env.GITHUB_REPOSITORY || "";
-    console.log(`Creating PR on: ${consumingRepo}`);
-
-    // Create PR via GitHub API
-    const prPayload = JSON.stringify({
-      title: "docs(auto): update AI documentation",
-      head: branchName,
-      base: "main",
-      body: "Auto-generated documentation update by doc-gen-action.\n\n- Updated `" + claudeMdPath + "`\n- Updated `" + claudeMdVerbosePath + "`",
-    });
-    const tmpPrFile = "/tmp/doc-gen-pr-payload.json";
-    writeFileSync(tmpPrFile, prPayload);
-
-    const prResponse = execSync(
-      `curl -s -w "\\n%{http_code}" -X POST -H "Authorization: token ${githubToken}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${consumingRepo}/pulls -d @${tmpPrFile}`,
-      { encoding: "utf-8" }
-    );
-    const prLines = prResponse.trim().split("\n");
-    const prStatus = prLines.pop();
-    const prBody = prLines.join("\n");
-    console.log(`PR API response: HTTP ${prStatus}`);
-
-    if (prStatus === "201") {
-      const prUrl = JSON.parse(prBody).html_url;
-      console.log(`PR created: ${prUrl}`);
-    } else {
-      console.log(`::warning::Failed to create PR (HTTP ${prStatus}): ${prBody.substring(0, 500)}`);
-    }
-
-    // Switch back to main for the human docs push step
-    execSync("git checkout main", { stdio: "inherit" });
-  } else {
-    console.log("No changes to AI docs — skipping PR creation.");
-  }
+  pushAiDocs(createDefaultDeps(githubToken), {
+    consumingRepo,
+    filePaths: [claudeMdPath, claudeMdVerbosePath],
+    commitMessage: "docs(auto): update AI documentation",
+    prTitle: "docs(auto): update AI documentation",
+    prBody:
+      "Auto-generated documentation update by doc-gen-action.\n\n" +
+      `- Updated \`${claudeMdPath}\`\n` +
+      `- Updated \`${claudeMdVerbosePath}\``,
+  });
   console.log("::endgroup::");
 
   console.log(`::group::Pushing human docs to ${docsRepo}`);
